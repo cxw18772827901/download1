@@ -47,15 +47,28 @@
 	<true/>
 
 	<!-- ios/Runner/Info.plist -->
-    <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
+        <!-- 网络权限 -->
+        <key>NSAppTransportSecurity</key>
+        <dict>
+            <key>NSAllowsArbitraryLoads</key>
+            <true/>
+        </dict>
+
+        <!-- 后台模式 -->
+        <key>UIBackgroundModes</key>
+        <array>
+            <string>fetch</string>
+            <string>processing</string>
+            <string>remote-notification</string>
+        </array>
+
+        <!-- 照片库使用说明 (如果需要保存到相册) -->
+        <key>NSPhotoLibraryUsageDescription</key>
+        <string>We need access to save downloaded videos</string>
+
+        <key>NSPhotoLibraryAddUsageDescription</key>
+        <string>We need access to save downloaded videos to your photo library</string>
     </dict>
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>fetch</string>
-        <string>processing</string>
-    </array>
 </dict>
 </plist>

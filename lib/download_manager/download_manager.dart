@@ -1,11 +1,12 @@
 // lib/download_manager/download_manager.dart
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
 import 'package:dio/dio.dart';
 import 'package:download/download_manager/database_helper.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/permission_manager.dart';
 
 enum DownloadStatus {
   pending,
@@ -64,18 +65,18 @@ class DownloadTask {
   };
 
   factory DownloadTask.fromJson(Map<String, dynamic> json) => DownloadTask(
-    id: json['id'],
-    url: json['url'],
-    title: json['title'],
-    type: VideoType.values[json['type']],
-    savePath: json['savePath'],
-    status: DownloadStatus.values[json['status']],
-    progress: json['progress'],
-    downloadedBytes: json['downloadedBytes'],
-    totalBytes: json['totalBytes'],
-    error: json['error'],
-    m3u8Key: json['m3u8Key'],
-    m3u8IV: json['m3u8IV'],
+    id: json['id'].toString(),
+    url: json['url'] as String,
+    title: json['title'] as String,
+    type: VideoType.values[json['type'] as int],
+    savePath: json['savePath'] as String?,
+    status: DownloadStatus.values[json['status'] as int],
+    progress: (json['progress'] as num).toDouble(),
+    downloadedBytes: json['downloadedBytes'] as int,
+    totalBytes: json['totalBytes'] as int,
+    error: json['error'] as String?,
+    m3u8Key: json['m3u8Key'] as String?,
+    m3u8IV: json['m3u8IV'] as String?,
   );
 }
 
@@ -98,6 +99,7 @@ class DownloadManager {
   Stream<DownloadTask> get taskStream => _taskController.stream;
 
   late DatabaseHelper _dbHelper;
+  final _permissionManager = PermissionManager();
 
   Future<void> initialize() async {
     _dbHelper = DatabaseHelper();
@@ -108,12 +110,47 @@ class DownloadManager {
 
   Future<void> _loadTasksFromDB() async {
     final tasks = await _dbHelper.getAllTasks();
+    print('📦 Loaded ${tasks.length} tasks from database');
+
     for (var task in tasks) {
       _tasks[task.id] = task;
       if (task.status == DownloadStatus.downloading) {
         task.status = DownloadStatus.paused;
+        await _dbHelper.updateTask(task);
       }
+      print('  - ${task.title}: ${task.status.name}');
     }
+  }
+
+  Future<String?> addDownloadWithPermission({
+    required BuildContext context,
+    required String url,
+    required String title,
+    String? m3u8Key,
+    String? m3u8IV,
+  }) async {
+    final hasPermission = await _permissionManager.requestStoragePermission(context);
+
+    if (!hasPermission) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Storage permission is required'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return null;
+    }
+
+    final id = addDownload(
+      url: url,
+      title: title,
+      m3u8Key: m3u8Key,
+      m3u8IV: m3u8IV,
+    );
+
+    return id;
   }
 
   String addDownload({
@@ -139,17 +176,24 @@ class DownloadManager {
     _tasks[id] = task;
     _downloadQueue.add(id);
     _dbHelper.insertTask(task);
+
+    print('➕ Added task: $title');
+    _notifyTaskUpdate(task);
+
     _processQueue();
 
     return id;
   }
 
   Future<void> _processQueue() async {
+    print('🔄 Processing queue: ${_downloadQueue.length} tasks, $_activeDownloads active');
+
     while (_activeDownloads < _maxConcurrent && _downloadQueue.isNotEmpty) {
       final taskId = _downloadQueue.removeAt(0);
       final task = _tasks[taskId];
 
-      if (task != null && task.status != DownloadStatus.downloading) {
+      if (task != null && task.status == DownloadStatus.pending) {
+        print('🚀 Starting download: ${task.title}');
         _activeDownloads++;
         _startDownload(task);
       }
@@ -159,7 +203,9 @@ class DownloadManager {
   Future<void> _startDownload(DownloadTask task) async {
     task.status = DownloadStatus.downloading;
     task.cancelToken = CancelToken();
+    task.error = null;
     _notifyTaskUpdate(task);
+    await _dbHelper.updateTask(task);
 
     try {
       if (task.type == VideoType.mp4) {
@@ -168,50 +214,22 @@ class DownloadManager {
         await _downloadM3U8(task);
       }
     } catch (e) {
-      if (e is DioException && e.response?.statusCode == 404) {
-        // 404 错误，删除已下载内容
-        await _handle404Error(task);
-      } else {
-        task.status = DownloadStatus.failed;
-        task.error = e.toString();
-        _notifyTaskUpdate(task);
+      print('❌ Download error: $e');
+
+      if (e is DioException && e.type == DioExceptionType.cancel) {
+        print('⏸️ Download cancelled by user');
+        return;
       }
+
+      task.status = DownloadStatus.failed;
+      task.error = e.toString();
+      _notifyTaskUpdate(task);
+      await _dbHelper.updateTask(task);
     } finally {
       _activeDownloads--;
-      await _dbHelper.updateTask(task);
+      print('✅ Download finished: ${task.title}, active: $_activeDownloads');
       _processQueue();
     }
-  }
-
-  Future<void> _handle404Error(DownloadTask task) async {
-    debugPrint('Handle 404 for task: ${task.title}');
-
-    // 删除已下载的文件
-    if (task.savePath != null) {
-      final file = File(task.savePath!);
-      if (await file.exists()) {
-        await file.delete();
-      }
-
-      // 如果是 m3u8，删除临时文件夹
-      if (task.type == VideoType.m3u8) {
-        final dir = Directory('${task.savePath!}_temp');
-        if (await dir.exists()) {
-          await dir.delete(recursive: true);
-        }
-      }
-    }
-
-    // 重置任务状态
-    task.status = DownloadStatus.failed;
-    task.progress = 0;
-    task.downloadedBytes = 0;
-    task.totalBytes = 0;
-    task.error = '404 Not Found - Please update URL and retry';
-    task.savePath = null;
-
-    _notifyTaskUpdate(task);
-    await _dbHelper.updateTask(task);
   }
 
   Future<void> _downloadMP4(DownloadTask task) async {
@@ -222,12 +240,19 @@ class DownloadManager {
     await file.parent.create(recursive: true);
     task.savePath = savePath;
 
-    // 检查断点续传
     int downloadedBytes = 0;
     if (await file.exists()) {
       downloadedBytes = await file.length();
       task.downloadedBytes = downloadedBytes;
+      print('📥 Resuming from: ${_formatBytes(downloadedBytes)}');
     }
+
+    print('⬇️ Starting download: ${task.url}');
+    print('💾 Save to: $savePath');
+
+    // ⭐ 追踪上次通知的进度
+    double lastNotifiedProgress = 0;
+    int lastPrintedPercent = 0;
 
     await _dio.download(
       task.url,
@@ -237,7 +262,19 @@ class DownloadManager {
           task.downloadedBytes = received + downloadedBytes;
           task.totalBytes = total + downloadedBytes;
           task.progress = (received + downloadedBytes) / (total + downloadedBytes);
-          _notifyTaskUpdate(task);
+
+          // ⭐ 关键：每 0.5% 通知一次 UI 更新
+          if ((task.progress - lastNotifiedProgress) >= 0.005 || task.progress == 1.0) {
+            lastNotifiedProgress = task.progress;
+            _notifyTaskUpdate(task);
+          }
+
+          // 每 5% 打印一次日志
+          int currentPercent = (task.progress * 100).toInt();
+          if (currentPercent % 5 == 0 && currentPercent != lastPrintedPercent) {
+            lastPrintedPercent = currentPercent;
+            print('📊 ${task.title}: $currentPercent% - ${_formatBytes(task.downloadedBytes)}/${_formatBytes(task.totalBytes)}');
+          }
         }
       },
       cancelToken: task.cancelToken,
@@ -252,6 +289,9 @@ class DownloadManager {
     task.status = DownloadStatus.completed;
     task.progress = 1.0;
     _notifyTaskUpdate(task);
+    await _dbHelper.updateTask(task);
+
+    print('✅ Download completed: ${task.title}');
   }
 
   Future<void> _downloadM3U8(DownloadTask task) async {
@@ -259,24 +299,25 @@ class DownloadManager {
     final tempDir = Directory('${dir.path}/downloads/${task.id}_temp');
     await tempDir.create(recursive: true);
 
-    // 下载并解析 m3u8
     final response = await _dio.get(task.url);
     final m3u8Content = response.data as String;
     final segments = _parseM3U8(m3u8Content, task.url);
 
     task.totalBytes = segments.length;
+    print('📺 M3U8 has ${segments.length} segments');
 
-    // 下载所有分片
     final segmentFiles = <File>[];
     for (int i = 0; i < segments.length; i++) {
       if (task.cancelToken?.isCancelled ?? false) {
-        throw Exception('Download cancelled');
+        throw DioException(
+          requestOptions: RequestOptions(path: task.url),
+          type: DioExceptionType.cancel,
+        );
       }
 
       final segmentPath = '${tempDir.path}/segment_$i.ts';
       final segmentFile = File(segmentPath);
 
-      // 检查是否已下载
       if (!await segmentFile.exists()) {
         try {
           await _dio.download(
@@ -286,13 +327,12 @@ class DownloadManager {
           );
         } catch (e) {
           if (e is DioException && e.response?.statusCode == 404) {
-            rethrow; // 重新抛出 404 错误以便上层处理
+            rethrow;
           }
           throw e;
         }
       }
 
-      // 解密（如果需要）
       if (task.m3u8Key != null) {
         await _decryptSegment(segmentFile, task.m3u8Key!, task.m3u8IV);
       }
@@ -300,20 +340,26 @@ class DownloadManager {
       segmentFiles.add(segmentFile);
       task.downloadedBytes = i + 1;
       task.progress = (i + 1) / segments.length;
+
+      // ⭐ 每个分片下载完就通知
       _notifyTaskUpdate(task);
+
+      if ((i + 1) % 10 == 0 || i == segments.length - 1) {
+        print('📊 M3U8: ${i + 1}/${segments.length} segments (${(task.progress * 100).toStringAsFixed(1)}%)');
+      }
     }
 
-    // 合并分片
+    print('🔗 Merging segments...');
     final outputPath = '${dir.path}/downloads/${task.id}.mp4';
     await _mergeSegments(segmentFiles, outputPath);
 
-    // 清理临时文件
     await tempDir.delete(recursive: true);
 
     task.savePath = outputPath;
     task.status = DownloadStatus.completed;
     task.progress = 1.0;
     _notifyTaskUpdate(task);
+    await _dbHelper.updateTask(task);
   }
 
   List<String> _parseM3U8(String content, String baseUrl) {
@@ -335,7 +381,6 @@ class DownloadManager {
   }
 
   Future<void> _decryptSegment(File file, String key, String? iv) async {
-    // 使用 isolate 在后台解密，避免卡顿
     final result = await compute(_decryptInIsolate, {
       'filePath': file.path,
       'key': key,
@@ -349,18 +394,7 @@ class DownloadManager {
 
   static Future<bool> _decryptInIsolate(Map<String, dynamic> params) async {
     try {
-      final file = File(params['filePath']);
-      final key = params['key'] as String;
-      final iv = params['iv'] as String?;
-
-      // 这里实现 AES 解密逻辑
-      // 使用 encrypt 包进行解密
-      final bytes = await file.readAsBytes();
-
-      // TODO: 实现具体的 AES-128 解密
-      // final decrypted = ...;
-
-      // await file.writeAsBytes(decrypted);
+      // TODO: 实现 AES-128 解密
       return true;
     } catch (e) {
       debugPrint('Decrypt error: $e');
@@ -382,8 +416,11 @@ class DownloadManager {
   void pauseDownload(String taskId) {
     final task = _tasks[taskId];
     if (task != null && task.status == DownloadStatus.downloading) {
-      task.cancelToken?.cancel();
+      print('⏸️ Pausing: ${task.title}');
+
+      task.cancelToken?.cancel('User paused');
       task.status = DownloadStatus.paused;
+
       _notifyTaskUpdate(task);
       _dbHelper.updateTask(task);
     }
@@ -391,39 +428,77 @@ class DownloadManager {
 
   void resumeDownload(String taskId) {
     final task = _tasks[taskId];
-    if (task != null && task.status == DownloadStatus.paused) {
-      _downloadQueue.add(taskId);
+    if (task != null &&
+        (task.status == DownloadStatus.paused ||
+            task.status == DownloadStatus.failed)) {
+
+      print('▶️ Resuming: ${task.title}');
+
+      task.status = DownloadStatus.pending;
+      task.error = null;
+
+      if (!_downloadQueue.contains(taskId)) {
+        _downloadQueue.add(taskId);
+      }
+
+      _notifyTaskUpdate(task);
+      _dbHelper.updateTask(task);
+
       _processQueue();
     }
   }
 
-  void cancelDownload(String taskId) async {
+  Future<void> cancelDownload(String taskId) async {
     final task = _tasks[taskId];
     if (task != null) {
-      task.cancelToken?.cancel();
+      print('❌ Cancelling: ${task.title}');
+
+      task.cancelToken?.cancel('User cancelled');
       task.status = DownloadStatus.cancelled;
 
-      // 删除下载文件
       if (task.savePath != null) {
         final file = File(task.savePath!);
         if (await file.exists()) {
           await file.delete();
+        }
+
+        if (task.type == VideoType.m3u8) {
+          final tempDir = Directory('${task.savePath!}_temp');
+          if (await tempDir.exists()) {
+            await tempDir.delete(recursive: true);
+          }
         }
       }
 
       _tasks.remove(taskId);
       _downloadQueue.remove(taskId);
       await _dbHelper.deleteTask(taskId);
+
       _notifyTaskUpdate(task);
     }
   }
 
   DownloadTask? getTask(String taskId) => _tasks[taskId];
 
-  List<DownloadTask> getAllTasks() => _tasks.values.toList();
+  List<DownloadTask> getAllTasks() {
+    final tasks = _tasks.values.toList();
+    tasks.sort((a, b) => b.id.compareTo(a.id));
+    return tasks;
+  }
 
   void _notifyTaskUpdate(DownloadTask task) {
-    _taskController.add(task);
+    if (!_taskController.isClosed) {
+      _taskController.add(task);
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
   void dispose() {
