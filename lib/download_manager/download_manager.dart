@@ -233,8 +233,18 @@ class DownloadManager {
   }
 
   Future<void> _downloadMP4(DownloadTask task) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final savePath = '${dir.path}/downloads/${task.id}.mp4';
+    Directory? saveRoot = await getApplicationDocumentsDirectory();
+    if (Platform.isAndroid) {
+      // var dir = await getExternalStorageDirectory();
+      saveRoot = Directory('/storage/emulated/0/Download/');
+      if (!await saveRoot.exists()) {
+        await saveRoot.create(recursive: true);
+      }
+    }
+    var savePath = '${saveRoot.path}/downloads/${task.id}.mp4';
+    if(Platform.isAndroid){
+      savePath = '${saveRoot.path}/${task.id}.mp4';
+    }
     final file = File(savePath);
 
     await file.parent.create(recursive: true);
@@ -296,8 +306,19 @@ class DownloadManager {
 
   /// ✅ 完整增强版 M3U8 下载，带 Master 检测 + 清晰度选择 + 实时进度回调
   Future<void> _downloadM3U8(DownloadTask task) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final tempDir = Directory('${dir.path}/downloads/${task.id}_temp');
+    Directory? saveRoot = await getApplicationDocumentsDirectory();
+    if (Platform.isAndroid) {
+      // var dir = await getExternalStorageDirectory();
+      saveRoot = Directory('/storage/emulated/0/Download/');
+      if (!await saveRoot.exists()) {
+        await saveRoot.create(recursive: true);
+      }
+    }
+    var tempDir = Directory('${saveRoot.path}/downloads/${task.id}_temp');
+    if(Platform.isAndroid){
+      tempDir = Directory('${saveRoot.path}/${task.id}_temp');
+    }
+
     await tempDir.create(recursive: true);
 
     try {
@@ -400,7 +421,10 @@ class DownloadManager {
       }
 
       // 🟢 Step 3: 合并全部分片
-      final outputPath = '${dir.path}/downloads/${task.id}.mp4';
+      var outputPath = '${saveRoot.path}/downloads/${task.id}.mp4';
+      if(Platform.isAndroid){
+        outputPath = '${saveRoot.path}/${task.id}.mp4';
+      }
       print('🔗 Merging ${segmentFiles.length} segments to $outputPath ...');
       await _mergeSegments(segmentFiles, outputPath);
       await tempDir.delete(recursive: true);
