@@ -165,32 +165,41 @@ class _DownloadScreenState extends State<DownloadScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 12,vertical: 10),
             child: Column(
               children: [
                 TextField(
+                  style: const TextStyle(fontSize: 16),
                   controller: _urlController,
                   decoration: const InputDecoration(
                     labelText: 'Video URL (mp4 or m3u8)',
                     border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    isDense: true,
                   ),
                   maxLines: 2,
                   minLines: 1,
                 ),
                 const SizedBox(height: 12),
                 TextField(
+                  style: const TextStyle(fontSize: 16),
                   controller: _titleController,
                   decoration: const InputDecoration(
                     labelText: 'Title',
                     border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    isDense: true,
                   ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
+                  style: const TextStyle(fontSize: 16),
                   controller: _keyController,
                   decoration: const InputDecoration(
                     labelText: 'M3U8 Key (optional)',
                     border: OutlineInputBorder(),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    isDense: true,
                   ),
                 ),
                 const SizedBox(height: 12),
