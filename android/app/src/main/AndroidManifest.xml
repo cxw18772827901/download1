@@ -25,6 +25,8 @@
     <!-- 唤醒锁 (保持下载) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
     <application
         android:requestLegacyExternalStorage="true"
         android:label="download"

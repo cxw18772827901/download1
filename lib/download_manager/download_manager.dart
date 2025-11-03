@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:download/download_manager/database_helper.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:image_gallery_saver_plus/image_gallery_saver_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import '../utils/permission_manager.dart';
 
@@ -301,6 +302,9 @@ class DownloadManager {
     _notifyTaskUpdate(task);
     await _dbHelper.updateTask(task);
 
+    // 自动保存到相册
+    await _saveVideoToGallery(task.savePath!);
+
     print('✅ Download completed: ${task.title}');
   }
 
@@ -436,6 +440,9 @@ class DownloadManager {
       _notifyTaskUpdate(task);
       await _dbHelper.updateTask(task);
 
+      // 自动保存到相册
+      await _saveVideoToGallery(task.savePath!);
+
       print('✅ M3U8 download completed: ${task.title}');
     } catch (e, st) {
       print('❌ Error downloading M3U8: $e\n$st');
@@ -443,6 +450,20 @@ class DownloadManager {
       task.error = e.toString();
       _notifyTaskUpdate(task);
       await _dbHelper.updateTask(task);
+    }
+  }
+
+  Future<void> _saveVideoToGallery(String filePath) async {
+    try {
+      print('🖼️ Saving video to Gallery: $filePath');
+      final result = await ImageGallerySaverPlus.saveFile(filePath);
+      if (result == true) {
+        print('✅ Video saved to Gallery');
+      } else {
+        print('⚠️ Failed to save to Gallery');
+      }
+    } catch (e) {
+      print('❌ Gallery save error: $e');
     }
   }
 

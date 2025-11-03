@@ -17,8 +17,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
 
   final _urlController = TextEditingController(
       // text: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-      // text: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8'
-         text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+      text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
   );
   final _titleController = TextEditingController(text: 'Big Buck Bunny - 480p');
   final _keyController = TextEditingController();
