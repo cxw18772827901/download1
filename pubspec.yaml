@@ -31,19 +31,21 @@ dependencies:
   flutter:
     sdk: flutter
   dio: ^5.4.0
-  path_provider: ^2.1.1
-  sqflite: ^2.3.0
+  path_provider: ^2.1.5
+  sqflite: ^2.4.2
   permission_handler: ^11.0.1
   device_info_plus: ^9.1.2
-  flutter_local_notifications: ^16.2.0
+  flutter_local_notifications: ^19.5.0
   encrypt: ^5.0.3
   # iOS 后台任务
-  flutter_background_service: ^5.0.5
+  # flutter_background_service: ^5.0.5
   # Android WorkManager
-  workmanager: ^0.5.2
+  # workmanager: ^0.5.2
   uuid: ^4.2.2
   intl: ^0.18.1
-  image_gallery_saver_plus: ^3.0.5
+  image_gallery_saver_plus: ^4.0.1
+  # path_provider: ^2.1.5
+  path_provider_android: ^2.2.20
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
@@ -62,6 +64,8 @@ dev_dependencies:
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
+dependency_overrides:
+  win32: 5.15.0
 
 # The following section is specific to Flutter packages.
 flutter:

@@ -146,7 +146,7 @@ class PermissionManager {
           TextButton(
             onPressed: () async {
               Navigator.pop(context);
-              // ⭐ 这里是正确的使用方式
+              // 这里是正确的使用方式
               await openAppSettings();
             },
             child: const Text('Open Settings'),
@@ -156,7 +156,7 @@ class PermissionManager {
     );
   }
 
-  /// 打开应用设置 ⭐ 独立方法
+  /// 打开应用设置独立方法
   // Future<bool> openSettings() async {
   //   return await openAppSettings();
   // }

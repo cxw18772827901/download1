@@ -261,7 +261,7 @@ class DownloadManager {
     print('⬇️ Starting download: ${task.url}');
     print('💾 Save to: $savePath');
 
-    // ⭐ 追踪上次通知的进度
+    // 追踪上次通知的进度
     double lastNotifiedProgress = 0;
     int lastPrintedPercent = 0;
 
@@ -274,7 +274,7 @@ class DownloadManager {
           task.totalBytes = total + downloadedBytes;
           task.progress = (received + downloadedBytes) / (total + downloadedBytes);
 
-          // ⭐ 关键：每 0.5% 通知一次 UI 更新
+          // 关键：每 0.5% 通知一次 UI 更新
           if ((task.progress - lastNotifiedProgress) >= 0.005 || task.progress == 1.0) {
             lastNotifiedProgress = task.progress;
             _notifyTaskUpdate(task);

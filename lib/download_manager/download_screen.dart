@@ -16,23 +16,23 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final _permissionManager = PermissionManager();
 
   final _urlController = TextEditingController(
-      // text: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-      text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+      text: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+      // text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
   );
   final _titleController = TextEditingController(text: 'Big Buck Bunny - 480p');
   final _keyController = TextEditingController();
 
-  // ⭐ 添加初始化标志
+  // 添加初始化标志
   bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    _initializeManager();  // ⭐ 改为调用异步方法
+    _initializeManager();  // 改为调用异步方法
     _checkPermissions();
   }
 
-  // ⭐ 新增：异步初始化方法
+  // 新增：异步初始化方法
   Future<void> _initializeManager() async {
     await _downloadManager.initialize();
     if (mounted) {
@@ -212,7 +212,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
             ),
           ),
           const Divider(),
-          // ⭐ 修复：先显示加载动画，初始化完成后显示列表
+          // 修复：先显示加载动画，初始化完成后显示列表
           Expanded(
             child: !_isInitialized
                 ? const Center(
@@ -221,7 +221,7 @@ class _DownloadScreenState extends State<DownloadScreen> {
                 : StreamBuilder<DownloadTask>(
               stream: _downloadManager.taskStream,
               builder: (context, snapshot) {
-                // ⭐ 每次 stream 触发都重新获取所有任务
+                // 每次 stream 触发都重新获取所有任务
                 final tasks = _downloadManager.getAllTasks();
 
                 if (tasks.isEmpty) {
