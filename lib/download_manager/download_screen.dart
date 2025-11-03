@@ -16,7 +16,9 @@ class _DownloadScreenState extends State<DownloadScreen> {
   final _permissionManager = PermissionManager();
 
   final _urlController = TextEditingController(
-      text: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+      // text: 'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+      // text: 'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8'
+         text: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
   );
   final _titleController = TextEditingController(text: 'Big Buck Bunny - 480p');
   final _keyController = TextEditingController();
@@ -291,13 +293,13 @@ class DownloadTaskItem extends StatelessWidget {
     required this.onCancel,
   }) : super(key: key);
 
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  String _formatBytes(VideoType type, int bytes) {
+    if (bytes < 1024) return '$bytes ${type == VideoType.mp4?'B':''}';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} ${type == VideoType.mp4?'KB':''}';
     if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} ${type == VideoType.mp4?'MB':''}';
     }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} ${type == VideoType.mp4?'GB':''}';
   }
 
   Color _getStatusColor(DownloadStatus status) {
@@ -372,12 +374,12 @@ class DownloadTaskItem extends StatelessWidget {
                 ),
                 if (task.totalBytes > 0)
                   Text(
-                    '${_formatBytes(task.downloadedBytes)} / ${_formatBytes(task.totalBytes)}',
+                    '${_formatBytes(task.type, task.downloadedBytes)} / ${_formatBytes(task.type, task.totalBytes)}',
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
                   )
                 else if (task.downloadedBytes > 0)
                   Text(
-                    _formatBytes(task.downloadedBytes),
+                    _formatBytes(task.type, task.downloadedBytes),
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
               ],

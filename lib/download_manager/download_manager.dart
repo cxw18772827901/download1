@@ -21,7 +21,7 @@ enum VideoType { mp4, m3u8 }
 
 class DownloadTask {
   final String id;
-  final String url;
+  String url;
   final String title;
   final VideoType type;
   String? savePath;
@@ -244,7 +244,7 @@ class DownloadManager {
     if (await file.exists()) {
       downloadedBytes = await file.length();
       task.downloadedBytes = downloadedBytes;
-      print('📥 Resuming from: ${_formatBytes(downloadedBytes)}');
+      print('📥 Resuming from: ${_formatBytes(task.type, downloadedBytes)}');
     }
 
     print('⬇️ Starting download: ${task.url}');
@@ -273,7 +273,7 @@ class DownloadManager {
           int currentPercent = (task.progress * 100).toInt();
           if (currentPercent % 5 == 0 && currentPercent != lastPrintedPercent) {
             lastPrintedPercent = currentPercent;
-            print('📊 ${task.title}: $currentPercent% - ${_formatBytes(task.downloadedBytes)}/${_formatBytes(task.totalBytes)}');
+            print('📊 ${task.title}: $currentPercent% - ${_formatBytes(task.type, task.downloadedBytes)}/${_formatBytes(task.type, task.totalBytes)}');
           }
         }
       },
@@ -294,72 +294,132 @@ class DownloadManager {
     print('✅ Download completed: ${task.title}');
   }
 
+  /// ✅ 完整增强版 M3U8 下载，带 Master 检测 + 清晰度选择 + 实时进度回调
   Future<void> _downloadM3U8(DownloadTask task) async {
     final dir = await getApplicationDocumentsDirectory();
     final tempDir = Directory('${dir.path}/downloads/${task.id}_temp');
     await tempDir.create(recursive: true);
 
-    final response = await _dio.get(task.url);
-    final m3u8Content = response.data as String;
-    final segments = _parseM3U8(m3u8Content, task.url);
+    try {
+      print('📡 Fetching M3U8: ${task.url}');
+      final response = await _dio.get(task.url, cancelToken: task.cancelToken);
+      final content = response.data as String;
 
-    task.totalBytes = segments.length;
-    print('📺 M3U8 has ${segments.length} segments');
-
-    final segmentFiles = <File>[];
-    for (int i = 0; i < segments.length; i++) {
-      if (task.cancelToken?.isCancelled ?? false) {
-        throw DioException(
-          requestOptions: RequestOptions(path: task.url),
-          type: DioExceptionType.cancel,
-        );
+      // 🧭 Step 1: 判断 Master playlist
+      if (content.contains('#EXT-X-STREAM-INF')) {
+        print('🧩 Detected Master M3U8, selecting best variant ...');
+        final bestUrl = _selectBestVariant(content, task.url);
+        print('🎯 Using best variant: $bestUrl');
+        // return _downloadM3U8(task.copyWith(url: bestUrl, cancelToken: task.cancelToken));
+        task.url = bestUrl; // 直接修改原 task
+        return _downloadM3U8(task);
       }
 
-      final segmentPath = '${tempDir.path}/segment_$i.ts';
-      final segmentFile = File(segmentPath);
+      // 🟩 Step 2: Media Playlist，解析所有分片
+      final segments = _parseM3U8(content, task.url);
+      if (segments.isEmpty) throw Exception('No segments found in $task.url');
 
-      if (!await segmentFile.exists()) {
-        try {
-          await _dio.download(
-            segments[i],
-            segmentPath,
-            cancelToken: task.cancelToken,
+      task.totalBytes = segments.length;
+      print('📺 Found ${segments.length} segments');
+
+      final segmentFiles = <File>[];
+
+      // 🕒 下载分片循环
+      for (int i = 0; i < segments.length; i++) {
+        if (task.cancelToken?.isCancelled ?? false) {
+          throw DioException(
+            requestOptions: RequestOptions(path: task.url),
+            type: DioExceptionType.cancel,
           );
-        } catch (e) {
-          if (e is DioException && e.response?.statusCode == 404) {
-            rethrow;
-          }
-          throw e;
         }
+
+        final segUrl = segments[i];
+        final segPath = '${tempDir.path}/segment_$i.ts';
+        final segFile = File(segPath);
+
+        // 已存在则跳过
+        if (await segFile.exists() && await segFile.length() > 0) {
+          segmentFiles.add(segFile);
+          task.downloadedBytes = i + 1;
+          task.progress = (i + 1) / segments.length;
+          _notifyTaskUpdate(task);
+          continue;
+        }
+
+        // 每个分片下载支持重试
+        int retries = 0;
+        const maxRetries = 3;
+
+        while (true) {
+          try {
+            int lastPrintedPercent = 0;
+
+            await _dio.download(
+              segUrl,
+              segFile.path,
+              cancelToken: task.cancelToken,
+              deleteOnError: false,
+              onReceiveProgress: (received, total) {
+                // print('⬇️ segment $i progress: $received/$total');
+                if (total <= 0) return;
+                final segProgress = received / total;
+                final overallProgress = (i + segProgress) / segments.length;
+                task.progress = overallProgress;
+
+                // 整体下载进度推送
+                _notifyTaskUpdate(task);
+
+                final percent = (overallProgress * 100).toInt();
+                if (percent % 5 == 0 && percent != lastPrintedPercent) {
+                  lastPrintedPercent = percent;
+                  print('📊 ${task.title}: $percent% ($i/${segments.length})');
+                }
+              },
+            );
+
+            break; // ✅ 下载成功，退出重试循环
+          } catch (e) {
+            retries++;
+            if (retries >= maxRetries) {
+              throw Exception('Segment $i failed after $retries retries: $e');
+            }
+            print('⚠️ Segment $i failed, retrying ($retries/$maxRetries)...');
+            await Future.delayed(const Duration(seconds: 2));
+          }
+        }
+
+        // 如果有加密 Key，进行解密
+        if (task.m3u8Key != null) {
+          await _decryptSegment(segFile, task.m3u8Key!, task.m3u8IV);
+        }
+
+        segmentFiles.add(segFile);
+        task.downloadedBytes = i + 1;
+        task.progress = (i + 1) / segments.length;
+        _notifyTaskUpdate(task);
       }
 
-      if (task.m3u8Key != null) {
-        await _decryptSegment(segmentFile, task.m3u8Key!, task.m3u8IV);
-      }
+      // 🟢 Step 3: 合并全部分片
+      final outputPath = '${dir.path}/downloads/${task.id}.mp4';
+      print('🔗 Merging ${segmentFiles.length} segments to $outputPath ...');
+      await _mergeSegments(segmentFiles, outputPath);
+      await tempDir.delete(recursive: true);
 
-      segmentFiles.add(segmentFile);
-      task.downloadedBytes = i + 1;
-      task.progress = (i + 1) / segments.length;
-
-      // ⭐ 每个分片下载完就通知
+      // ✅ 更新状态
+      task.savePath = outputPath;
+      task.status = DownloadStatus.completed;
+      task.progress = 1.0;
       _notifyTaskUpdate(task);
+      await _dbHelper.updateTask(task);
 
-      if ((i + 1) % 10 == 0 || i == segments.length - 1) {
-        print('📊 M3U8: ${i + 1}/${segments.length} segments (${(task.progress * 100).toStringAsFixed(1)}%)');
-      }
+      print('✅ M3U8 download completed: ${task.title}');
+    } catch (e, st) {
+      print('❌ Error downloading M3U8: $e\n$st');
+      task.status = DownloadStatus.failed;
+      task.error = e.toString();
+      _notifyTaskUpdate(task);
+      await _dbHelper.updateTask(task);
     }
-
-    print('🔗 Merging segments...');
-    final outputPath = '${dir.path}/downloads/${task.id}.mp4';
-    await _mergeSegments(segmentFiles, outputPath);
-
-    await tempDir.delete(recursive: true);
-
-    task.savePath = outputPath;
-    task.status = DownloadStatus.completed;
-    task.progress = 1.0;
-    _notifyTaskUpdate(task);
-    await _dbHelper.updateTask(task);
   }
 
   List<String> _parseM3U8(String content, String baseUrl) {
@@ -367,17 +427,43 @@ class DownloadManager {
     final segments = <String>[];
     final baseUri = Uri.parse(baseUrl);
 
-    for (var line in lines) {
-      line = line.trim();
-      if (line.isNotEmpty && !line.startsWith('#')) {
-        final segmentUrl = line.startsWith('http')
-            ? line
-            : baseUri.resolve(line).toString();
-        segments.add(segmentUrl);
-      }
+    for (final rawLine in lines) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) continue; // 忽略注释
+      final uri = line.startsWith('http')
+          ? Uri.parse(line)
+          : baseUri.resolve(line);
+      segments.add(uri.toString());
     }
 
     return segments;
+  }
+
+  String _selectBestVariant(String content, String baseUrl) {
+    final lines = content.split('\n');
+    final baseUri = Uri.parse(baseUrl);
+    final variants = <Map<String, dynamic>>[];
+
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i].trim();
+      if (line.startsWith('#EXT-X-STREAM-INF')) {
+        final match = RegExp(r'BANDWIDTH=(\d+)').firstMatch(line);
+        final bw = match != null ? int.parse(match.group(1)!) : 0;
+        if (i + 1 < lines.length) {
+          final next = lines[i + 1].trim();
+          if (next.isNotEmpty && !next.startsWith('#')) {
+            final resolved = next.startsWith('http')
+                ? next
+                : baseUri.resolve(next).toString();
+            variants.add({'url': resolved, 'bw': bw});
+          }
+        }
+      }
+    }
+
+    if (variants.isEmpty) throw Exception('No variants found in master playlist');
+    variants.sort((a, b) => b['bw'].compareTo(a['bw']));
+    return variants.first['url'];
   }
 
   Future<void> _decryptSegment(File file, String key, String? iv) async {
@@ -492,13 +578,13 @@ class DownloadManager {
     }
   }
 
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  String _formatBytes(VideoType type, int bytes) {
+    if (bytes < 1024) return '$bytes ${type == VideoType.mp4?'B':''}';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} ${type == VideoType.mp4?'KB':''}';
     if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} ${type == VideoType.mp4?'MB':''}';
     }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} ${type == VideoType.mp4?'GB':''}';
   }
 
   void dispose() {
